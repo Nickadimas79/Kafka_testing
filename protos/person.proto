@@ -1,0 +1,49 @@
+syntax = "proto3";
+package kafka_testing;
+
+option go_package = "./people;people";
+
+message USAddress {
+  string Street = 1;
+  int32 Zipcode = 2;
+  string UnitNum = 3;
+  string City = 4;
+  string State = 5;
+}
+
+message PhoneNumber {
+  string CountryCode = 1;
+  string Number = 2;
+}
+
+message PhoneNumbers {
+  PhoneNumber Cell = 1;
+  PhoneNumber Home = 2;
+  PhoneNumber Work = 3;
+}
+
+message Person {
+  int64 Id = 1;
+  string Name = 2;
+  string BirthDate = 3;
+  int32 Age = 4;
+  PhoneNumbers ContactNumbers = 5;
+  USAddress Address = 6;
+  string Company = 7;
+}
+
+// generic response for error/completion/etc... messages beyond rpc protocols
+message Response {
+  string RespMessage = 1;
+}
+
+message PersonReq {
+  int64 Id = 1;
+}
+
+service People {
+//  rpc GetPerson(PersonReq) returns (Person) {}
+  rpc CreatePerson(Person) returns (Response) {}
+//  rpc UpdatePerson(Person) returns (Response) {}
+//  rpc DeletePerson(PersonReq) returns (Response) {}
+}

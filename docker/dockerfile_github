@@ -1,0 +1,46 @@
+# Use Alpine-based Go as the base image for the build layer
+FROM public.ecr.aws/docker/library/golang:1.20-alpine AS build
+
+COPY . /build
+
+WORKDIR /build
+
+# Install build-time dependencies
+RUN apk update \
+&&  apk add --no-cache \
+      ca-certificates gcc git musl-dev
+
+# Build the runtime executable binary
+RUN --mount=type=secret,id=GITHUB_TOKEN \
+    git config --global \
+      url."https://oauth2:$(cat /run/secrets/GITHUB_TOKEN)@github.com/".insteadOf "https://github.com/" \
+&&  go mod download \
+&&  go build \
+      -ldflags "-s -w -linkmode external -extldflags -static" \
+      -tags static \
+      -tags musl \
+      -o /main \
+      /build/cmd/main.go
+
+# Use Alpine as the base image for the runtime layer
+FROM public.ecr.aws/docker/library/alpine:3.18 AS runtime
+
+# To use scratch instead of Alpine as the base image, remove or comment
+# out the FROM directive above, and uncomment the following lines:
+
+###
+# # Use scratch as the base image for the runtime layer
+# FROM scratch as runtime
+#
+# # Copy certificate authority data from base image
+# COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+###
+
+# Copy executable binary from base image
+COPY --from=build /main /main
+
+# Expose listening ports for application
+EXPOSE 8080 9000
+
+# Command to run when starting the container
+ENTRYPOINT ["./main"]
