@@ -2,6 +2,7 @@ package people
 
 import (
 	"context"
+
 	pb "github.com/Nickadimas79/kafka_testing/protobufs/people"
 )
 
