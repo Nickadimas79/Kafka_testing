@@ -2,43 +2,59 @@ package main
 
 import (
 	"fmt"
-	c "github.com/Nickadimas79/kafka_testing/kafka/consumer"
 	"log"
-	"net"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
-	"github.com/Nickadimas79/kafka_testing/pkg/people"
-
+	"github.com/Nickadimas79/kafka_testing/cmd/grpc_server"
+	"github.com/Nickadimas79/kafka_testing/kafka/ccloud"
+	c "github.com/Nickadimas79/kafka_testing/kafka/consumer"
 	p "github.com/Nickadimas79/kafka_testing/kafka/producer"
-	peoplePB "github.com/Nickadimas79/kafka_testing/protobufs/people"
-
-	"google.golang.org/grpc"
 )
 
-const gRPCPort = ":8080"
-
 func main() {
-	fmt.Println("::STARTING PRODUCER/CONSUMER APP::")
+	fmt.Println("::STARTING APP::")
 
-	// this is a single run of the Producer
-	go p.Producer()
+	// start gRPC server on independent thread
+	go grpc_server.StartGRPC()
+
+	// this is a single instance of the Producer used for
+	// producing all messages from this service
+	pro := p.New(ccloud.ProducerConfig())
+
 	// Consumer runs until it is told to stop (ctl-c) or errors
-	go c.Consumer()
+	con := c.New(ccloud.ConsumerConfig())
+	go con.Consume()
 
-	lis, err := net.Listen("tcp", gRPCPort)
-	if err != nil {
-		log.Println("failed to start TCP listener")
-		os.Exit(1)
+	// Set up a channel for handling Ctrl-C, etc...
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	var wg sync.WaitGroup
+	run := true
+
+	// loop checking for OS signals
+	for run == true {
+		select {
+		// graceful shutdown of Producer/Consumer
+		case sig := <-sigChan:
+			wg.Add(2)
+			log.Printf("caught signal %v\n", sig)
+			go func() {
+				defer wg.Done()
+				pro.TearDown()
+			}()
+			go func() {
+				defer wg.Done()
+				con.TearDown()
+			}()
+
+			run = false
+		}
 	}
 
-	peopleServer := people.Server{}
-
-	grpcServer := grpc.NewServer()
-
-	peoplePB.RegisterPeopleServer(grpcServer, &peopleServer)
-
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Println("failed to start gRPC server")
-		os.Exit(1)
-	}
+	wg.Wait()
+	log.Println("system shut down")
 }

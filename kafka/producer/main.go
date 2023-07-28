@@ -3,62 +3,73 @@ package producer
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"log"
 	"os"
-
-	"github.com/Nickadimas79/kafka_testing/kafka/ccloud"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
 
-func Producer() {
-	fmt.Println("starting Producer")
+type Producer struct {
+	Pro *kafka.Producer
+}
 
-	wd, _ := os.Getwd()
-	conf := ccloud.ReadConfig(wd + "/kafka/producer/properties")
+// Instance singleton instance of a kafka producer
+var Instance Producer
 
-	topic := "testing"
-	p, err := kafka.NewProducer(&conf)
+func New(configMap kafka.ConfigMap) *Producer {
+	log.Println("creating Producer")
+
+	p, err := kafka.NewProducer(&configMap)
 
 	if err != nil {
 		fmt.Printf("Failed to create producer: %s", err)
 		os.Exit(1)
 	}
 
-	// Go-routine to handle message delivery reports and
-	// possibly other event types (errors, stats, etc)
-	go func() {
-		for e := range p.Events() {
-			switch ev := e.(type) {
-			case *kafka.Message:
-				if ev.TopicPartition.Error != nil {
-					fmt.Printf("Failed to deliver message: %v\n", ev.TopicPartition)
-				} else {
-					fmt.Printf("Produced event to topic %s: key = %-10s value = %s\n",
-						*ev.TopicPartition.Topic, string(ev.Key), string(ev.Value))
-				}
-			}
-		}
-	}()
-
-	users := [...]string{"eabara", "jsmith", "sgarcia", "jbernard", "htanaka", "awalther"}
-	items := [...]string{"book", "alarm clock", "t-shirts", "gift card", "batteries"}
-
-	for n := 0; n < 10; n++ {
-		key := users[rand.Intn(len(users))]
-		data := items[rand.Intn(len(items))]
-		p.Produce(&kafka.Message{
-			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-			Key:            []byte(key),
-			Value:          []byte(data),
-		}, nil)
+	Instance = Producer{
+		Pro: p,
 	}
 
-	// Wait for all messages to be delivered
-	p.Flush(15 * 1000)
-	p.Close()
+	return &Instance
 }
 
+func (p Producer) TearDown() {
+	log.Printf("flushing %v Messages/Requests from Producer\n", p.Pro.Flush(10000))
+
+	log.Println("closing Producer")
+	p.Pro.Close()
+}
+
+func (p Producer) Produce(data *kafka.Message) {
+	errChan := make(chan kafka.Event)
+
+	err := p.Pro.Produce(data, errChan)
+	if err != nil {
+		log.Println("Kafka Message not enqueued")
+		//return err
+	}
+
+	e := <-errChan
+
+	switch ev := e.(type) {
+	case kafka.Error:
+		log.Println("Producer error")
+		close(errChan)
+		//return ev
+	case *kafka.Message:
+		log.Printf("produced Message to Topic %s\n", *ev.TopicPartition.Topic)
+		log.Printf("with key = %s offset = %v value = %v\n",
+			string(ev.Key), ev.TopicPartition.Offset, string(ev.Value))
+
+		close(errChan)
+	}
+
+	//return nil
+}
+
+// BuildMsg builds a Kafka msg from any data type passed for the topic you pass.
+// Can't be bound to any interfaces or objects, IE as a method, because of the
+// nature of generics at this time. (?)
 func BuildMsg[T any](data *T, topic string) *kafka.Message {
 	d, _ := json.Marshal(data)
 

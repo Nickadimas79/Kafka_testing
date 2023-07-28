@@ -3,7 +3,9 @@ package ccloud
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
@@ -37,4 +39,53 @@ func ReadConfig(configFile string) kafka.ConfigMap {
 
 	return m
 
+}
+
+func ProducerConfig() kafka.ConfigMap {
+	var conf kafka.ConfigMap
+
+	env := os.Getenv("ENV")
+	if env == "" {
+		// For local development purposes using locally held "properties" file.
+		log.Println("defaulting Producer to Rando Caltestian Kafka")
+
+		p, _ := os.Getwd()
+		conf = ReadConfig(filepath.Join(p + "/kafka/producer/properties"))
+	} else {
+		conf = kafka.ConfigMap{
+			"bootstrap.servers": os.Getenv("BOOT_STRAP_SERVER"),
+			"security.protocol": os.Getenv("SECURITY_PROTOCOL"),
+			"sasl.mechanisms":   os.Getenv("SASL_MECHANISMS"),
+			"sasl.username":     os.Getenv("SASL_USERNAME"),
+			"sasl.password":     os.Getenv("SASL_PASSWORD"),
+			"acks":              os.Getenv("ACKS"),
+		}
+	}
+
+	return conf
+}
+
+func ConsumerConfig() kafka.ConfigMap {
+	var conf kafka.ConfigMap
+
+	env := os.Getenv("ENV")
+	if env == "" {
+		// For local development purposes using locally held "properties" file.
+		log.Println("defaulting Consumer to Rando Caltestian Kafka")
+
+		p, _ := os.Getwd()
+		conf = ReadConfig(filepath.Join(p + "/kafka/consumer/properties"))
+	} else {
+		conf = kafka.ConfigMap{
+			"bootstrap.servers":  os.Getenv("BOOT_STRAP_SERVER"),
+			"security.protocol":  os.Getenv("SECURITY_PROTOCOL"),
+			"sasl.mechanisms":    os.Getenv("SASL_MECHANISMS"),
+			"sasl.username":      os.Getenv("SASL_USERNAME"),
+			"sasl.password":      os.Getenv("SASL_PASSWORD"),
+			"enable.auto.commit": true,
+			"auto.offset.reset":  "earliest",
+		}
+	}
+
+	return conf
 }

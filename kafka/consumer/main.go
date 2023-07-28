@@ -1,57 +1,101 @@
 package consumer
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
-
-	"github.com/Nickadimas79/kafka_testing/kafka/ccloud"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
 
-func Consumer() {
-	fmt.Println("starting Consumer")
+var testingTopic = "testing"
 
-	wd, _ := os.Getwd()
-	conf := ccloud.ReadConfig(wd + "/kafka/consumer/properties")
-	conf["group.id"] = "kafka-testing"
-	conf["auto.offset.reset"] = "earliest"
+type Consumer struct {
+	Con *kafka.Consumer
+	SD  chan struct{}
+}
+
+// Instance singleton instance of a kafka consumer
+var Instance Consumer
+
+func New(conf kafka.ConfigMap) *Consumer {
+	log.Println("creating Consumer")
+
+	conf["group.id"] = "ontrack-assets-engine"
+	conf["go.logs.channel.enable"] = true
+	//conf["go.logs.channel"] = logKafka.LogChannel(cCtx)
 
 	c, err := kafka.NewConsumer(&conf)
-
 	if err != nil {
-		fmt.Printf("Failed to create consumer: %s", err)
+		log.Println("failed to create Consumer")
 		os.Exit(1)
 	}
 
-	topic := "testing"
-	err = c.SubscribeTopics([]string{topic}, nil)
+	Instance = Consumer{
+		Con: c,
+		SD:  make(chan struct{}, 1),
+	}
+
+	return &Instance
+}
+
+func (c Consumer) TearDown() {
+	// signal to shut down consumer loop
+	c.SD <- struct{}{}
+	log.Println("closing Consumer")
+
+	// block to wait for loop to shut down
+	<-c.SD
+
+	err := c.Con.Close()
+	if err != nil {
+		log.Println("error closing Consumer")
+	}
+}
+
+func (c Consumer) Consume() {
+	log.Println("starting Consumer")
+	topics := []string{
+		testingTopic,
+	}
+
+	err := c.Con.SubscribeTopics(topics, nil)
+	if err != nil {
+		log.Println("failed to subscribe to Topics")
+		os.Exit(1)
+	}
 
 	// Set up a channel for handling Ctrl-C, etc
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Process messages
 	run := true
-	for run {
-		select {
-		case sig := <-sigchan:
-			fmt.Printf("Caught signal %v: terminating Consumer\n", sig)
+	// goroutine used to end loop when signal is sent
+	go func() {
+		_, ok := <-c.SD
+		if ok {
 			run = false
-		default:
-			ev, err := c.ReadMessage(100 * time.Millisecond)
-			if err != nil {
-				// Errors are informational and automatically handled by the consumer
-				continue
-			}
+		}
+	}()
+	for run == true {
+		ev := c.Con.Poll(100)
+		if ev == nil {
+			continue
+		}
 
-			fmt.Printf("Consumed event from topic %s: key = %-10s value = %s\n",
-				*ev.TopicPartition.Topic, string(ev.Key), string(ev.Value))
+		// switch to check event type
+		switch msg := ev.(type) {
+		case *kafka.Message:
+			// switch to check topic type
+			switch *msg.TopicPartition.Topic {
+			case testingTopic:
+				log.Printf("consumed Message from Topic %s\n", *msg.TopicPartition.Topic)
+				log.Printf("with value: %+v\n", string(msg.Value))
+			}
+		case kafka.Error:
 		}
 	}
 
-	c.Close()
+	c.SD <- struct{}{}
 }
