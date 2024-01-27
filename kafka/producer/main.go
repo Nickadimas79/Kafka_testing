@@ -1,8 +1,8 @@
 package producer
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 
@@ -22,7 +22,7 @@ func New(configMap kafka.ConfigMap) *Producer {
 	p, err := kafka.NewProducer(&configMap)
 
 	if err != nil {
-		fmt.Printf("Failed to create producer: %s", err)
+		log.Printf("Failed to create producer: %s", err)
 		os.Exit(1)
 	}
 
@@ -33,20 +33,12 @@ func New(configMap kafka.ConfigMap) *Producer {
 	return &Instance
 }
 
-func (p Producer) TearDown() {
-	log.Printf("flushing %v Messages/Requests from Producer\n", p.Pro.Flush(10000))
-
-	log.Println("closing Producer")
-	p.Pro.Close()
-}
-
-func (p Producer) Produce(data *kafka.Message) {
+func (p Producer) Produce(ctx context.Context, data *kafka.Message) {
 	errChan := make(chan kafka.Event)
 
 	err := p.Pro.Produce(data, errChan)
 	if err != nil {
-		log.Println("Kafka Message not enqueued")
-		//return err
+		log.Println("Kafka Message not enqueued/produced:", err)
 	}
 
 	e := <-errChan
@@ -55,7 +47,7 @@ func (p Producer) Produce(data *kafka.Message) {
 	case kafka.Error:
 		log.Println("Producer error")
 		close(errChan)
-		//return ev
+
 	case *kafka.Message:
 		log.Printf("produced Message to Topic %s\n", *ev.TopicPartition.Topic)
 		log.Printf("with key = %s offset = %v value = %v\n",
@@ -63,8 +55,6 @@ func (p Producer) Produce(data *kafka.Message) {
 
 		close(errChan)
 	}
-
-	//return nil
 }
 
 // BuildMsg builds a Kafka msg from any data type passed for the topic you pass.

@@ -1,5 +1,5 @@
 bootstrap.servers=pkc-ymrq7.us-east-2.aws.confluent.cloud:9092
 security.protocol=SASL_SSL
 sasl.mechanisms=PLAIN
-sasl.username=
-sasl.password=
+sasl.username=blaaaaah
+sasl.password=blaaaaah

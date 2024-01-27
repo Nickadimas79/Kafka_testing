@@ -1,6 +1,7 @@
 package consumer
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -12,8 +13,8 @@ import (
 var testingTopic = "testing"
 
 type Consumer struct {
-	Con *kafka.Consumer
-	SD  chan struct{}
+	Con      *kafka.Consumer
+	ShutDown chan struct{}
 }
 
 // Instance singleton instance of a kafka consumer
@@ -24,7 +25,7 @@ func New(conf kafka.ConfigMap) *Consumer {
 
 	conf["group.id"] = "ontrack-assets-engine"
 	conf["go.logs.channel.enable"] = true
-	//conf["go.logs.channel"] = logKafka.LogChannel(cCtx)
+	// conf["go.logs.channel"] = logKafka.LogChannel(cCtx)
 
 	c, err := kafka.NewConsumer(&conf)
 	if err != nil {
@@ -33,28 +34,14 @@ func New(conf kafka.ConfigMap) *Consumer {
 	}
 
 	Instance = Consumer{
-		Con: c,
-		SD:  make(chan struct{}, 1),
+		Con:      c,
+		ShutDown: make(chan struct{}, 1),
 	}
 
 	return &Instance
 }
 
-func (c Consumer) TearDown() {
-	// signal to shut down consumer loop
-	c.SD <- struct{}{}
-	log.Println("closing Consumer")
-
-	// block to wait for loop to shut down
-	<-c.SD
-
-	err := c.Con.Close()
-	if err != nil {
-		log.Println("error closing Consumer")
-	}
-}
-
-func (c Consumer) Consume() {
+func (c Consumer) Consume(ctx context.Context) {
 	log.Println("starting Consumer")
 	topics := []string{
 		testingTopic,
@@ -71,31 +58,38 @@ func (c Consumer) Consume() {
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 
 	run := true
-	// goroutine used to end loop when signal is sent
-	go func() {
-		_, ok := <-c.SD
-		if ok {
-			run = false
-		}
-	}()
 	for run == true {
 		ev := c.Con.Poll(100)
 		if ev == nil {
 			continue
 		}
-
-		// switch to check event type
-		switch msg := ev.(type) {
-		case *kafka.Message:
-			// switch to check topic type
-			switch *msg.TopicPartition.Topic {
-			case testingTopic:
-				log.Printf("consumed Message from Topic %s\n", *msg.TopicPartition.Topic)
-				log.Printf("with value: %+v\n", string(msg.Value))
+		// select for closing down context
+		select {
+		case <-ctx.Done():
+			log.Println("Consumer thread canceled")
+			run = false
+		default:
+			// switch to check event type
+			switch msg := ev.(type) {
+			case *kafka.Message:
+				// switch to check topic type
+				switch *msg.TopicPartition.Topic {
+				case testingTopic:
+					log.Printf("consumed Message from Topic %s\n", *msg.TopicPartition.Topic)
+					log.Printf("with value: %+v\n", string(msg.Value))
+				}
+			case kafka.Error:
+				log.Println("Kafka error:", msg)
 			}
-		case kafka.Error:
 		}
 	}
 
-	c.SD <- struct{}{}
+	log.Println("closing Consumer")
+	err = c.Con.Close()
+	if err != nil {
+		log.Println("error closing Consumer")
+	}
+
+	log.Println("Consumer closed")
+	c.ShutDown <- struct{}{}
 }

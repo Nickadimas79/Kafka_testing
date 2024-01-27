@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 func main() {
 	fmt.Println("::STARTING APP::")
+	ctx, cancel := context.WithCancel(context.Background())
 
 	// start gRPC server on independent thread
 	go grpc_server.StartGRPC()
@@ -26,7 +28,7 @@ func main() {
 
 	// Consumer runs until it is told to stop (ctl-c) or errors
 	con := c.New(ccloud.ConsumerConfig())
-	go con.Consume()
+	go con.Consume(ctx)
 
 	// Set up a channel for handling Ctrl-C, etc...
 	sigChan := make(chan os.Signal, 1)
@@ -42,13 +44,28 @@ func main() {
 		case sig := <-sigChan:
 			wg.Add(2)
 			log.Printf("caught signal %v\n", sig)
+
+			// clean up Producer object and connection
 			go func() {
 				defer wg.Done()
-				pro.TearDown()
+
+				log.Printf("flushing %v Messages/Requests from Producer\n", pro.Pro.Flush(1000))
+
+				log.Println("closing Producer")
+				pro.Pro.Close()
+				log.Println("Producer closed")
 			}()
+
+			// shutdown of Consumer connection
 			go func() {
 				defer wg.Done()
-				con.TearDown()
+
+				log.Println("canceling Consumer thread")
+				cancel()
+
+				// wait for consumer chan to signal finished shutting down
+				<-con.ShutDown
+				// time.Sleep(5 * time.Second)
 			}()
 
 			run = false
